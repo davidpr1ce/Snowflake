@@ -846,7 +846,7 @@ def create2d_data(db, key, latlongrid, *, Interp=False, resolution=1., Nanzero=F
     latspace = np.linspace(latlongrid[1], latlongrid[3], nlat+1)
     lonspace = np.linspace(latlongrid[0], latlongrid[2], nlon+1)
  
-    #interpolating wind_direction requires breaking down into componenets and back, need extra dimension
+    #interpolating wind_direction requires breaking down into components and back, need extra dimension
     windvecs = 1 
     if (key == 'wind_vector'): windvecs=2
     
@@ -1054,7 +1054,7 @@ def plot_latlon_scatter(DataFrame, *, latlongrid=[-180, -75, 180, 75], ckey='edr
     
     
 def gradients(start, end, *, key='temperature', latlongrid=[-140, 15, -50, 65], Alayers=[0,50000], \
-              resolution=2., grid=False, Interp=False, Convolve=None, OutA=False):
+              resolution=2., grid=False, Interp=False, Convolve=None, OutA=False, Interpdb=True):
     
     '''
     function to plot variable gradients and turbulence reports together
@@ -1072,7 +1072,8 @@ def gradients(start, end, *, key='temperature', latlongrid=[-140, 15, -50, 65], 
     import matplotlib.pyplot as plt
 
     db = get_db(start, end, latlongrid=latlongrid, Alayer=[0,50000])
-
+    
+    if (Interpdb == True): db = interpolate_db(db)
 
     if (OutA==False):
         nlayers = len(Alayers)-1
