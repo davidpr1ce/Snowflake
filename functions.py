@@ -7,13 +7,17 @@ Created on Tue Sep  3 10:15:54 2019
 """
 
 #regions of interest
-NA = [-80,25,10,65]
-US = [-140,15,-50, 65]
-JP = [80,15,180,65]
-EU = [-30,25,55,70]
-PC = [110, 5, -110, 75]
-GLOBE = [-180, -70, 180, 70]
-ATLAS = [-10, 25, 10, 40]
+NA = [-80,25,10,65]   #north atlantic
+US = [-140,25,-50, 45] #U.S
+EA = [80,15,180,65] # east asia
+JP = [120, 25, 150, 50] #japan
+GB = [-12, 48, 5, 60]
+EU = [-30,25,55,70] # europe
+PC = [110, 5, -110, 75] #pacific
+GLOBE = [-180, -70, 180, 70] #globe
+ATLAS = [-10, 25, 10, 40] # atlas mountains
+CA = [-10, 10, 150, 65 ]  #continental asia
+
 
 
     
@@ -215,8 +219,8 @@ def get_flight(month, tafi):
     return flight
     
 def flight_info(flight, *, Plot=True, MaskT=False, \
-                Afilter=[0,50000], EDRf = [0,0], Tempfix=True, APlot=False, \
-                Velocity=0.):
+                Afilter=[0,50000], EDRf = [0,0], Tempfix=True, APlot=True, \
+                Velocity=0., addcol=False):
     '''
     Return and/or plot desired information for a given flight tafi in a specific month
     Inputs:
@@ -228,6 +232,8 @@ def flight_info(flight, *, Plot=True, MaskT=False, \
             Aplot - set to True to plot altitude plot
             Afilter - set to filter the altitude regions between Afilter[0] and Afilter[1]
             EDRf - set to filter mean EDRf[0] and peak EDRf[1] turbuluence reports
+            Velocity - set to calculate flight time (bit shit)
+            addcol - set to add columns of calculated variables to flight database
             
     '''
     import numpy as np
@@ -259,12 +265,18 @@ def flight_info(flight, *, Plot=True, MaskT=False, \
         return flight
     
     
-    time = flight['observation_time'] 
+    try:
+           time = flight['observation_time']
+    except KeyError:
+           time = [time_transform(flight['utc_timestamp'].iloc[i], Back=True) for i in range(len(flight))]
+           
     ntime =np.array(time)
 
     #converting to seconds for plotting
-    time = np.array([sum(x * int(t) for x, t in zip([3600, 60, 1], time.iloc[i][11:19].split(":"))) \
-                for i in range(len(time))])
+    #time = np.array([sum(x * int(t) for x, t in zip([3600, 60, 1], time.iloc[i][11:19].split(":"))) \
+     #           for i in range(len(time))])
+
+    time = np.array(flight['utc_timestamp']) - (flight['utc_timestamp'].iloc[0])   
         
     #dealing with flights that traverse midnight
     if ((np.all(time[-1] <= time[1])) == False):  #WAS time[:-1] <= time[1:] changed 1st oct
@@ -290,7 +302,7 @@ def flight_info(flight, *, Plot=True, MaskT=False, \
 
  
     #get departure and arrival airports
-    depA, arrA = flight['flight_departure_aerodrome'].iloc[0], flight['flight_destination_aerodrome'].iloc[0]
+    #depA, arrA = flight['flight_departure_aerodrome'].iloc[0], flight['flight_destination_aerodrome'].iloc[0]
     
     #average wind direction and velocity calculations
     #going to calculate heading by average of gradients 
@@ -454,9 +466,10 @@ def flight_info(flight, *, Plot=True, MaskT=False, \
 
         
     #adding interesting data columns
-    flight['adjusted_temp_gradient'] = pd.Series(tempg).values
-    flight['wind_component_gradient'] = pd.Series(np.gradient(wind_component_Series,time)).values
-    flight['seconds_since'] = pd.Series(time).values
+    if (addcol==True):
+           flight['adjusted_temp_gradient'] = pd.Series(tempg).values
+           flight['wind_component_gradient'] = pd.Series(np.gradient(wind_component_Series,time)).values
+           flight['seconds_since'] = pd.Series(time).values
     
     #very simple calculation of difference in flight time due to wind.
     if (Velocity > 0.):
@@ -566,13 +579,13 @@ def alt_shells(db, latlongrid, shells, *, Plot=True, edr_peak=0.18, vmax=50.):
     return pchance, mchance
 
         
-def get_db(start,end, *, latlongrid=[-80, 25, 10, 65], Alayer=[0,50000]):
+def get_db(start,end, *, latlongrid=GLOBE, Alayer=[0,50000], save=False, interped=False):
     '''
     function to return dataframe of events within a time window start - end
     Inputs:
         start - start time eg. 2019-04-01 12:00:00+00
         end - end time (same format)
-        latlongrid - grid you want to plot, defaults to north atlantic
+        latlongrid - grid you want to plot, defaults to globe
     Idea is for this to facilitate the past_conditions function below
     '''
     import pandas as pd
@@ -584,10 +597,16 @@ def get_db(start,end, *, latlongrid=[-80, 25, 10, 65], Alayer=[0,50000]):
     fmonth = end[5:7]
     
     print('get_db currently set to use v5 files (w/ event flags and new DAL destinations)')
+    
+    folder = '~/Documents/CSVnew/'
+    if (interped==True):
+           print('Reading interpolated Database')
+           folder = '~/Documents/ICSV/'
     #months are the same:
     if (int(imonth)==int(fmonth)):
     
-        fn = '~/Documents/CSVnew/2019-' + imonth + '-v5.csv'
+        fn = folder + '2019-' + imonth + '-v5.csv'
+        
         db = pd.read_csv(fn)
       
         start_ts = datetime.datetime.strptime(start+'00','%Y-%m-%d %H:%M:%S%z').timestamp()
@@ -608,11 +627,13 @@ def get_db(start,end, *, latlongrid=[-80, 25, 10, 65], Alayer=[0,50000]):
                  (db['longitude'] > latlongrid[0]) & (db['longitude'] < latlongrid[2]) ]
         
         db=db[(db['altitude']>Alayer[0]) & (db['altitude']<Alayer[1])]
+        print('Sorting.....')
+        db = db.sort_index()
         return db
     #time period straddles a single month boundary
     if (int(fmonth) - int(imonth)) == 1:
-        fn1 = '~/Documents/CSVnew/2019-' + imonth + '-v5.csv'
-        fn2 = '~/Documents/CSVnew/2019-' + fmonth + '-v5.csv'
+        fn1 = folder + '2019-' + imonth + '-v5.csv'
+        fn2 = folder + '2019-' + fmonth + '-v5.csv'
         
         db1 = pd.read_csv(fn1)
         ts1 = np.array(db1['utc_timestamp'])
@@ -634,11 +655,13 @@ def get_db(start,end, *, latlongrid=[-80, 25, 10, 65], Alayer=[0,50000]):
                  (db['longitude'] > latlongrid[0]) & (db['longitude'] < latlongrid[2]) ]
         
         db=db[(db['altitude']>Alayer[0]) & (db['altitude']<Alayer[1])]
+        print('Sorting.....')
+        db = db.sort_index()
         return db
     #time period straddles multiple months
     if (int(fmonth) - int(imonth)) > 1:
-        fn1 = '~/Documents/CSVnew/2019-' + imonth + '-v5.csv'
-        fn2 = '~/Documents/CSVnew/2019-' + fmonth + '-v5.csv'
+        fn1 = folder + '2019-' + imonth + '-v5.csv'
+        fn2 = folder + '2019-' + fmonth + '-v5.csv'
         
         db1 = pd.read_csv(fn1)
         ts1 = np.array(db1['utc_timestamp'])
@@ -661,11 +684,18 @@ def get_db(start,end, *, latlongrid=[-80, 25, 10, 65], Alayer=[0,50000]):
         db_list = []
         for i in range(n_intermediate_db):
             month = i+int(imonth)+1
-            db_i = pd.read_csv('~/Documents/CSVnew/2019-' + str(month).zfill(2) + '-v5.csv')
+            db_i = pd.read_csv(folder + '2019-' + str(month).zfill(2) + '-v5.csv')
             db_list.append(db_i)
     
         #concat all the dataframes together
         db = pd.concat([db1, pd.concat(db_list), db2])
+        
+        db = db[ (db['latitude'] > latlongrid[1]) & (db['latitude'] < latlongrid[3]) & \
+                 (db['longitude'] > latlongrid[0]) & (db['longitude'] < latlongrid[2]) ]
+        
+        db=db[(db['altitude']>Alayer[0]) & (db['altitude']<Alayer[1])]
+        print('Sorting.....')
+        db = db.sort_index()                
         return db
 
 
@@ -819,7 +849,7 @@ def time_transform(tin, *, Back=False):
     
     
     
-def create2d_data(db, key, latlongrid, *, Interp=False, resolution=1., Nanzero=False, Convolve=None):
+def create2d_data(db, key, latlongrid, *, resolution=1., Nanzero=False, minpoints=0 ):
     '''
     a function to interpolate mean data given keyword defined dataset 
     onto an evenly spaced latlongrid
@@ -831,12 +861,13 @@ def create2d_data(db, key, latlongrid, *, Interp=False, resolution=1., Nanzero=F
         resolution - tbd
         Nanzero - set to True to return zero points as nan
     Outputs:
-        2d interpolated dataset..
+        2d dataset for contour plots..
     '''
     
     import numpy as np
     import metpy.calc as mp
     from scipy import interpolate
+    
     
     #number of lat and lon bins
     nlat = int((latlongrid[3]-latlongrid[1])/resolution)
@@ -860,69 +891,32 @@ def create2d_data(db, key, latlongrid, *, Interp=False, resolution=1., Nanzero=F
             points = db[ (db['longitude'] >= lonspace[i]) & (db['longitude'] <= lonspace[i+1]) \
                         & (db['latitude'] >= latspace[j]) & (db['latitude'] <= latspace[j+1]) ]
             
-            if (len(points)>0):
+            #if (len(points)>minpoints):
+            if (len(points['metadata_tafi'].unique())>2): #make sure atleast 2 flights pass through grid space.
                     
-                if (key == 'wind_vector'): #wind vector handling
-                    Ev, Nv = mp.wind_components(np.array(points['wind_speed']),\
-                                                np.radians(np.array(points['wind_direction'])))
+                  
+                if (key == 'wind_vector'): #wind vector handling                   
+                    Ev, Nv = mp.wind_components(np.array(points['wind_speed'], dtype=float), np.radians(np.array(points['wind_direction'], dtype=float)))
                     mEv = np.mean(Ev)
                     mNv = np.mean(Nv)
                     grid[i,j,0] = mEv
                     grid[i,j,1] = mNv
+                    #break
                 else: #1d data handling
                     
                     mV = points[key].mean()
                     grid[i,j,0] = mV
      
-    nlonsp = lonspace #+ resolution/2.
-    nlatsp = latspace #+ resolution/2.               
+    nlonsp = lonspace + resolution/2.
+    nlatsp = latspace + resolution/2.               
     
-    if (Interp==False) & (Convolve==None):
-        
-        print( 'No Interpolation, No Convolution')
-        if (Nanzero==True): grid[np.where(grid == 0)] = np.nan      
-        if (key == 'wind_vector'):
-            return nlatsp, nlonsp, grid
-        else:
-            return nlatsp, nlonsp, grid[:,:,0]
+    if (Nanzero==True): grid[np.where(grid == 0)] = np.nan      
+    if (key == 'wind_vector'):
+        return nlatsp, nlonsp, grid
+    else:
+        return nlatsp, nlonsp, grid[:,:,0]
     
-    if (Convolve!=None):
-        grid[np.where(grid == 0)] = np.nan
-        grid[:,:,0] = convolve_nans(grid[:,:,0], stddev=Convolve)        
-        
-        print ('Convolution, No Interpolation')
-        
-        if (key == 'wind_vector'):
-            return nlatsp, nlonsp, grid
-        else:
-            return nlatsp, nlonsp, grid[:,:,0]
-    
-    if (Interp==True):  
-        #interpolating
-        print('Interpolation')
-        if (key == 'wind_vector'):
-            #the ordering of lat and lon is wacky because interp2d is weird, should work out... check!
-            f = interpolate.interp2d(nlatsp, nlonsp, grid[:,:,0], kind='cubic')
-            g = interpolate.interp2d(nlatsp, nlonsp, grid[:,:,1], kind='cubic')
-        else:
-            f = interpolate.interp2d(nlatsp, nlonsp, grid[:,:,0], kind='linear')
-            
-        #define new grids to interpolate onto, at the moment just double the resolution idk..
-        flonsp =  np.linspace(latlongrid[0], latlongrid[2], 2*nlat+1)+ resolution/4.
-        flatsp =  np.linspace(latlongrid[1], latlongrid[3], 2*nlon+1) + resolution/4.
-             
-        igrid = np.zeros((len(flonsp), len(flatsp), windvecs))  
 
-        if (key == 'wind_vector'):
-            igrid[:,:,0] = f(flonsp, flatsp)
-            igrid[:,:,1] = g(flonsp, flatsp)
-            if (Nanzero==True): igrid[np.where(igrid == 0)] = np.nan 
-            return flatsp, flonsp, igrid
-            
-        else:
-            igrid[:,:,0] = f(flonsp, flatsp)
-            if (Nanzero==True): igrid[np.where(igrid == 0)] = np.nan 
-            return flatsp, flonsp, igrid[:,:,0]
 
     
     
@@ -1028,7 +1022,7 @@ def plot_latlon_scatter(DataFrame, *, latlongrid=[-180, -75, 180, 75], ckey='edr
     lats = DataFrame['latitude']
     lons = DataFrame['longitude']
 
-    fig, axs = plt.subplots(1,1,figsize=(12,12))
+    fig, axs = plt.subplots(1,1,figsize=(16,12))
     
     
     bm = Basemap(resolution='l', epsg=3857, ax=axs, \
@@ -1039,15 +1033,18 @@ def plot_latlon_scatter(DataFrame, *, latlongrid=[-180, -75, 180, 75], ckey='edr
     
     
     bm.drawcoastlines()
-    bm.fillcontinents(alpha=0.3, color='green')
+    bm.fillcontinents(alpha=0.4, color='green')
     bm.drawcountries()
+    bm.drawstates()
+    #bm.shadedrelief()
+    #bm.drawrivers()
     
 
     
     scatterplot = bm.scatter(np.array(lons), np.array(lats), latlon=True, c=list(DataFrame[ckey]),
-                             marker='+', cmap='viridis', ax=axs)
+                             marker='o', cmap='seismic', ax=axs, alpha=0.8)
    
-    cb=plt.colorbar(scatterplot, fraction=0.02, pad=0.04, cmap='viridis')
+    cb=plt.colorbar(scatterplot, fraction=0.02, pad=0.04)
     cb.set_label(ckey)
     
     return DataFrame
@@ -1073,7 +1070,8 @@ def gradients(start, end, *, key='temperature', latlongrid=[-140, 15, -50, 65], 
 
     db = get_db(start, end, latlongrid=latlongrid, Alayer=[0,50000])
     
-    if (Interpdb == True): db = interpolate_db(db)
+    
+    if (Interpdb == True): db =interpolate_db(db)
 
     if (OutA==False):
         nlayers = len(Alayers)-1
@@ -1250,34 +1248,46 @@ def gradients(start, end, *, key='temperature', latlongrid=[-140, 15, -50, 65], 
     
     #return 2d histograms for stats
     if (OutA == True):
-        dbf = db[(db['altitude'] >= Alayers[0]) & (db['altitude'] <= Alayers[-1])]
-        xc, yc, contedr = create2d_data(dbf, 'edr_peak_value', latlongrid, resolution=resolution, Nanzero=True, Interp=Interp, Convolve=Convolve)      
+           
+        nlayers = len(Alayers)-1
         
-        xc, yc, contkey = create2d_data(dbf, key, latlongrid, resolution=resolution, Nanzero=True, Interp=Interp, Convolve=Convolve)                
-        #calculate gradient
-        if (key=='wind_vector'):
-             #calculationg gradient taking into account wind direction.... i think
-            cgEw = np.gradient(contkey[:,:,0], yc, xc, edge_order=2)
-            cgEw[0][np.where(cgEw[0] == np.nan)] = 0
-            cgEw[1][np.where(cgEw[1] == np.nan)] = 0
-            cgEw = np.sqrt(cgEw[0]**2.0 + cgEw[1]**2.0)
-            
-            cgNs = np.gradient(contkey[:,:,1], yc, xc, edge_order=2)
-            cgNs[0][np.where(cgNs[0] == np.nan)] = 0
-            cgNs[1][np.where(cgNs[1] == np.nan)] = 0            
-            cgNs = np.sqrt(cgNs[0]**2.0 + cgNs[1]**2.0)
-            
-            cg = np.sqrt(cgEw**2.0 + cgNs**2.0)
-        else:
-
-            cg = np.gradient(contkey, yc, xc, edge_order=2)
-            cg[0][np.where(cg[0] == np.nan)] = 0
-            cg[1][np.where(cg[1] == np.nan)] = 0 
-            cg = np.sqrt(cg[0]**2.0 + cg[1]**2.0)        
-
+        keygradient = np.array([])
+        edrvalues = np.array([])
+        alts = np.array([])
         
-        
-        return cg, contedr
+        for a in range(nlayers):
+           
+               dbf = db[(db['altitude'] >= Alayers[a]) & (db['altitude'] <= Alayers[a+1])]
+               xc, yc, contedr = create2d_data(dbf, 'edr_peak_value', latlongrid, resolution=resolution, Nanzero=True, Interp=Interp, Convolve=Convolve)      
+               
+               xc, yc, contkey = create2d_data(dbf, key, latlongrid, resolution=resolution, Nanzero=True, Interp=Interp, Convolve=Convolve)                
+               #calculate gradient
+               if (key=='wind_vector'):
+                    #calculationg gradient taking into account wind direction.... i think
+                   cgEw = np.gradient(contkey[:,:,0], yc, xc, edge_order=2)
+                   cgEw[0][np.where(cgEw[0] == np.nan)] = 0
+                   cgEw[1][np.where(cgEw[1] == np.nan)] = 0
+                   cgEw = np.sqrt(cgEw[0]**2.0 + cgEw[1]**2.0)
+                   
+                   cgNs = np.gradient(contkey[:,:,1], yc, xc, edge_order=2)
+                   cgNs[0][np.where(cgNs[0] == np.nan)] = 0
+                   cgNs[1][np.where(cgNs[1] == np.nan)] = 0            
+                   cgNs = np.sqrt(cgNs[0]**2.0 + cgNs[1]**2.0)
+                   
+                   cg = np.sqrt(cgEw**2.0 + cgNs**2.0)
+               else:
+       
+                   cg = np.gradient(contkey, yc, xc, edge_order=2)
+                   cg[0][np.where(cg[0] == np.nan)] = 0
+                   cg[1][np.where(cg[1] == np.nan)] = 0 
+                   cg = np.sqrt(cg[0]**2.0 + cg[1]**2.0)
+               
+               keygradient = np.append(keygradient, cg.flatten())
+               edrvalues = np.append(edrvalues, contedr.flatten())
+               alts = np.append(alts, np.ones_like(contedr.flatten())*Alayers[a+1])
+              
+               
+        return keygradient, edrvalues, alts
     else:    
         return dbf
     
@@ -1446,7 +1456,7 @@ def common_pairs(dbt, *, DAL=False, dist=False):
      
         
         
-def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, ptype='pmesh'):
+def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, ptype='kde',latlongrid=None):
 
     #llcrnrlon=-180.,llcrnrlat=-65,urcrnrlon=180.,urcrnrlat=75
     '''
@@ -1473,18 +1483,26 @@ def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, p
     #filter altitude
     dbt=dbt[(dbt['altitude']>altitude[0]) & (dbt['altitude']<altitude[1])]
     
+    #this isnt't really a good idea tbh, quartiles are volatile and you will probably end up with a flight level thats too low idk 
+    #print(dbt['altitude'].quantile(0.35), dbt['altitude'].quantile(0.65)) 
+    #dbt = dbt[(dbt['altitude'] > dbt['altitude'].quantile(0.35)) &\
+     #         (dbt['altitude'] < dbt['altitude'].quantile(0.65))]
+
+
+
+    
     #define a database of turbulent events only
     db_event = dbt[dbt['edr_mean_value'] > edr]
     
     #get lat and lon grid size
-    
-    latlongrid = np.round([dbt['longitude'].min(), dbt['latitude'].min(), dbt['longitude'].max(), dbt['latitude'].max()])
+    if (latlongrid==None):
+           latlongrid = np.round([dbt['longitude'].min(), dbt['latitude'].min(), dbt['longitude'].max(), dbt['latitude'].max()])
     
     dball_grid = grid_db(dbt, 'edr_mean_value', latlongrid, resolution=resolution)
     dbeve_grid = grid_db(db_event, 'edr_mean_value', latlongrid, resolution=resolution)
     
     #dbeve_grid['count'].iloc[np.where(dbeve_grid['count'] == dball_grid['count'])] = 0. #removing small number statistic cases
-    dbeve_grid = dbeve_grid[dball_grid['count'] >= (dball_grid['count'].mean() - dball_grid['count'].std()) ] # rremoving small number stats
+    #dbeve_grid = dbeve_grid[dball_grid['count'] >= (dball_grid['count'].mean() - dball_grid['count'].std()) ] # rremoving small number stats
     
     percent = (dbeve_grid['count']/dball_grid['count'])*100.
     
@@ -1492,18 +1510,18 @@ def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, p
     Pdb['longitude'] = dball_grid['longitude']
     Pdb['latitude'] = dball_grid['latitude']
     Pdb['percent'] = pd.Series(percent)
+
     
+    
+
+ 
     
     if (ptype=='kde'):
-           fig, axs = plt.subplots(1,1, figsize=(10,10))
-           bm = Basemap(resolution='l', epsg=3857, ax = axs,\
-                        llcrnrlon=latlongrid[0] ,\
-                        llcrnrlat=latlongrid[1] ,\
-                        urcrnrlon=latlongrid[2] ,\
-                        urcrnrlat=latlongrid[3] )
-           bm.drawcoastlines()
-           bm.fillcontinents(alpha=0.4, color='green')
-           bm.drawcountries()
+           fig, axs = plt.subplots(1,1, figsize=(20,20))
+
+           #creates a basemap instance baby - works!!!!
+           bm = basemap_instance(latlongrid, ax=axs)
+           #bm = bm_plot_ap(bm, latlongrid) -doesnt work
            
            nbins=100
            xall, yall = bm(np.array(dbt['longitude']), np.array(dbt['latitude']))
@@ -1515,18 +1533,38 @@ def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, p
            #hall[hall < (np.mean(hall))] = 0
            xeve, yeve = bm(np.array(db_event['longitude']), np.array(db_event['latitude']))
            heve, xedges, yedges = np.histogram2d(xeve,yeve,bins=[xbins, ybins])          
-
-
+           
+           
+           xx, yy = np.meshgrid((xedges[:-1]+xedges[1:])/2., (yedges[:-1]+yedges[1:])/2.)
+           
            hper = (heve/hall)*100.
            hper[np.isnan(hper)] = 0. #remove nans from dividing by zero in some bins
                    
            import scipy.ndimage.filters
                       
-
+           #kde filter the 2d histogram
            z = scipy.ndimage.filters.gaussian_filter((hper.T), resolution)
-           z.shape
-           im = bm.imshow(z, cmap='Reds', ax=axs, vmin=0, vmax=1.5*np.max(z))
-           cb = bm.colorbar(im, location='right', ax=axs)
+           
+           levels = np.linspace(np.nanmin(z), np.nanmax(z), 10)           
+           #plotting contourf with variable alphas
+           
+           #exponential alpha to make low levels faint and high levels clear          
+           alphas = np.array([i**1.2 for i in levels/np.max(levels)])
+
+           for l in range(len(levels)-1):
+                  bm.contour(xx, yy, z, ax=axs, zorder=2, levels=[levels[l], levels[l+1]], colors='black', alpha=alphas[l], linewidths=1.0)
+                  bm.contourf(xx,yy,z,ax=axs, zorder=1, levels=[levels[l], levels[l+1]], colors='red', alpha=alphas[l+1])
+           
+           
+           #making a custum color bar of reds with same alphas as above
+           my_cmap = np.array([[1.,0.,0.,1.] for i in alphas])
+           my_cmap[:,-1] = alphas
+           from matplotlib.colors import ListedColormap
+           my_cmap = ListedColormap(my_cmap)
+           
+           #cpf is just for the colorbar, zorder=0 so its underneath everything and doesnt show 
+           cpf = bm.contourf(xx, yy, z, ax=axs, zorder=0, levels=levels[:-1], cmap=my_cmap)
+           cb = bm.colorbar(cpf, location='right', ax=axs, drawedges=True)
            cb.set_label('Percentage')
     else:
            test = grid_and_plot_data(Pdb, latlongrid, key='percent', resolution=resolution, ptype=ptype)
@@ -1536,7 +1574,7 @@ def get_Pdb(dbt, edr, *, altitude=[0,50000], resolution=2., Interpolate=False, p
     
     
     
-def interpolate_flight(flightdf,*, interval=60.):
+def interpolate_flight(flightdf,*, interval=60., distance=False):
     '''Function to interpolate routine reports onto the same timescale as event reports, so that the percentage stats
         don't get fucked up by samping differences
         Input:
@@ -1546,9 +1584,10 @@ def interpolate_flight(flightdf,*, interval=60.):
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy as sp
+    import scipy.interpolate as scip
     
     variables = ['utc_timestamp', 'altitude', 'longitude', 'latitude', 'temperature', 'wind_direction', \
-             'wind_speed', 'edr_peak_value', 'edr_mean_value', 'report_flag']
+             'wind_speed', 'edr_peak_value', 'edr_mean_value', 'report_flag', 'metadata_tafi']
 
     if len(flightdf) >=2:
             
@@ -1560,17 +1599,19 @@ def interpolate_flight(flightdf,*, interval=60.):
 
         
         db = pd.DataFrame(columns=variables)
-        db['utc_timestamp'] = xn
-        for i in range(len(variables)):
-            f = sp.interpolate.interp1d(flightdf['utc_timestamp'], flightdf[variables[i]])
+        db['utc_timestamp'] = pd.Series(xn)
+        #i want tafi to carry through so i can still look at individual flights
+        db['metadata_tafi'] = pd.Series(np.array([flightdf['metadata_tafi'].iloc[0] for i in range(len(xn))]))
+        for i in range(len(variables)-1): #-1 so it doesnt do tafi since you cant interpolate strings
+            f = scip.interp1d(flightdf['utc_timestamp'], flightdf[variables[i]])
             interp = f(xn)
             if (variables[i] == 'report_flag'): interp[interp<0.9]=0.
             db[variables[i]] = pd.Series(interp)
         
         
         #fig, axs = plt.subplots(2,1, figsize=(12,10))
-        #axs[0].plot(flightdf['utc_timestamp'], flightdf['edr_mean_value'], marker='o')
-        #axs[1].plot(db['utc_timestamp'], db['edr_mean_value'], marker='o')
+        #axs[0].plot(flightdf['utc_timestamp'], flightdf['edr_peak_value'], marker='o')
+        #axs[1].plot(db['utc_timestamp'], db['edr_peak_value'], marker='o')
         
         
         
@@ -1581,7 +1622,7 @@ def interpolate_flight(flightdf,*, interval=60.):
     
     
     
-def interpolate_db(dbt, *, interval=60.):
+def interpolate_db(dbt, *, interval=60., save=False):
     '''
     Wrapper around interpolate_flight to do it to an entire database
     '''
@@ -1589,10 +1630,15 @@ def interpolate_db(dbt, *, interval=60.):
     import pandas as pd
     
     print('###WARNING### : Interpolation removes variables like tafi, destination etc.!!!! ')
+          
+    #sorting to avoid issues
+    print('Sorting.....')
+    dbt = dbt.sort_index()
+           
     
     tafis = dbt['metadata_tafi'].dropna().unique()
     variables = ['utc_timestamp', 'altitude', 'longitude', 'latitude', 'temperature', 'wind_direction', \
-         'wind_speed', 'edr_peak_value', 'edr_mean_value', 'report_flag']
+         'wind_speed', 'edr_peak_value', 'edr_mean_value', 'report_flag', 'metadata_tafi']
     
     dbtemp = pd.DataFrame(columns=variables)
     
@@ -1602,7 +1648,12 @@ def interpolate_db(dbt, *, interval=60.):
         dbtemp = pd.concat([dbtemp, f])
         if (i%np.round(len(tafis)/10.) == 0): print(np.round((i/len(tafis))*100.), ' %')
     
-    dbt = dbtemp      
+    dbt = dbtemp  
+
+    if (save==True):
+           filename = dbt['observation_time'].iloc[0] + '-' + dbt['observation_time'].iloc[-1] + '.csv'
+           dbt.to_csv('~/Documents/CSV_Vault/' + filename)
+    
     
     return dbt
     
@@ -1667,6 +1718,9 @@ def city_pair(db, depA, desA, *, Plot=True, nbins=100, latlongrid=None, resoluti
         #axs.text(ap2lon.iloc[0], ap2lon.iloc[0]+2.5, desA, latlon=True)
         
         #kde plot
+        #restrict contour plots to altitude region most flights spend in 
+        dbi = dbi[(dbi['altitude'] > dbi['altitude'].quantile(0.35)) & (dbi['altitude'] < dbi['altitude'].quantile(0.65))]
+        #above carries through to both kde and colormesh plots..
         db_event= dbi[dbi['edr_mean_value'] > 0.06]
         xall,yall = bm1(np.array(dbi['longitude']), np.array(dbi['latitude']))
         x0,y0 = bm1(latlongrid[0], latlongrid[1])
@@ -1730,39 +1784,57 @@ def city_pair(db, depA, desA, *, Plot=True, nbins=100, latlongrid=None, resoluti
 
         
     for tn in range(len(tafis)):
+        
         flight = db[db['metadata_tafi'] == tafis[tn]]
                 
         lons = np.array(flight['longitude'])
         lats = np.array(flight['latitude'])
         
         #add final points of airports
-        lons = np.insert(lons, 0, ap1lon.iloc[0])
-        lons = np.append(lons, ap2lon.iloc[0])
-        
-        lats = np.insert(lats, 0, ap1lat.iloc[0])
-        lats = np.append(lats, ap2lat.iloc[0])
-      
-        lats = np.interp(np.linspace(lats[0], lats[-1], nbins), lats, lats, period=180) 
-        lons = np.interp(np.linspace(lons[0], lons[-1], nbins), lons, lons, period=360)
-           
-        meanlons = meanlons + lons
-        meanlats = meanlats + lats            
-        
 
+       #handling directions so it doesnt break the averaging      
+        if (flight['flight_departure_aerodrome'].iloc[0] == desA):  
+               lons = np.insert(lons, 0, ap2lon.iloc[0])
+               lons = np.append(lons, ap1lon.iloc[0])
+               
+               lats = np.insert(lats, 0, ap2lat.iloc[0])
+               lats = np.append(lats, ap1lat.iloc[0])
+               
+               lons = lons[::-1]
+               lats = lats[::-1]
+       
+        else:
+               lons = np.insert(lons, 0, ap1lon.iloc[0])
+               lons = np.append(lons, ap2lon.iloc[0])        
+               lats = np.insert(lats, 0, ap1lat.iloc[0])
+               lats = np.append(lats, ap2lat.iloc[0])
+               
+
+        xlats = [i for i in range(len(lats))]
+        xlons = [i for i in range(len(lons))]
+      
+        lats_i = np.interp(np.linspace(xlats[0], xlats[-1], nbins), range(len(lats)), lats, period=180) 
+        lons_i = np.interp(np.linspace(xlons[0], xlons[-1], nbins), range(len(lons)), lons, period=360)
+           
+        meanlons = meanlons + lons_i
+        meanlats = meanlats + lats_i
+               
+       
         if (flight['flight_departure_aerodrome'].iloc[0] == desA):
                linest=':'
         else:
                linest = '-'
         
-        bm1.plot(np.array(flight['longitude']), np.array(flight['latitude']), latlon=True, c='k', alpha=0.2, zorder=1, linestyle=linest)
-        bm2.plot(np.array(flight['longitude']), np.array(flight['latitude']), latlon=True, c='k', alpha=0.2, zorder=1, linestyle=linest)
+        bm1.plot(np.array(flight['longitude']),np.array(flight['latitude']) , latlon=True, c='k', alpha=0.2, zorder=1, linestyle=linest)
+        bm2.plot(np.array(flight['longitude']),np.array(flight['latitude']), latlon=True, c='k', alpha=0.2, zorder=1, linestyle=linest)
         
-        
+
+       
     meanlons /=len(tafis)
     meanlats /=len(tafis)
     
-    #if (Plot==True):
-        #bm.scatter(meanlons, meanlats, latlon=True, marker='o', c='blue', alpha=0.6, zorder=1)
+    if (Plot==True):
+        bm2.scatter(meanlons, meanlats, latlon=True, marker='o', c='blue', alpha=0.6, zorder=3)
     
     
     return db, meanlons, meanlats
@@ -1832,7 +1904,7 @@ def perc_kde(db,bm,edr,*,nbins=100):
 def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  3000,  4000,  5000,  6000,  7000,  8000,\
         9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000,\
        18000, 19000, 20000, 21000, 22000, 23000, 24000, 25000, 26000,\
-       27000], Dshells=[  0,  45,  90, 135, 180, 225, 270, 315, 360], edr=0.06, lshell=2000.):
+       27000], Dshells=[  0,  45,  90, 135, 180, 225, 270, 315, 360], edr=0.06, lshell=2000., R=1.0):
        '''
        Function to plot turbulence occurent in and out of an airport
        airport_code- eg 'KJFK'
@@ -1854,7 +1926,6 @@ def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  
        dbi = get_db(start, end, latlongrid=grid, Alayer=[0,40000])
        dbi = dbi[(dbi['flight_departure_aerodrome'] == airport_code) | (dbi['flight_destination_aerodrome'] == airport_code)]
        db = interpolate_db(dbi)
-       R=1.0
        db = db[ (((db['longitude'] - c[0])**2 + (db['latitude'] - c[1])**2) <  R)]
        
        
@@ -1888,7 +1959,7 @@ def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  
                      C[j,k] = len(dbarc)
      
        #plot array 
-       ca = DAarray/np.nanmax(DAarray)
+       ca = DAarray/np.nanmax(DAarray) #normalise between 0-1 for colorscale
        for w in range(len(Dshells)-1):
               for x in range(len(Ashells)-1):
                      if np.isnan(ca[w,x]) == True:
@@ -1905,11 +1976,11 @@ def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  
        #ticks = [str(int(ax.get_yticks()[i])) for i in range(len(ax.get_yticks()))]
        ax.set_rlabel_position(270.)
        ax.set_yticklabels(' ')
-       ax.set_yticks([10,20])
-       ax.set_title(get_AP_name(airport_code))
+       ax.set_yticks([100,200])
+       ax.set_title(get_AP_name(airport_code) + ' : EDR Threshold = ' + str(edr))
        
        for i in range(len(ax.get_yticks())):
-              ax.text(np.radians(ax.get_rlabel_position()), ax.get_yticks()[i]*1000, 'FL'+str(int(ax.get_yticks()[i])), ha='center', va='center', bbox=dict(facecolor='white', alpha=1.), zorder=3 )
+              ax.text(np.radians(ax.get_rlabel_position()), ax.get_yticks()[i]*100, 'FL'+str(int(ax.get_yticks()[i])), ha='center', va='center', bbox=dict(facecolor='white', alpha=1.), zorder=3 )
        
        ax.text(0,0,airport_code, ha='center', va='center', color='white',  bbox=dict(facecolor=plt.cm.viridis(0), alpha=1.))
        from matplotlib.cm import ScalarMappable
@@ -1933,7 +2004,7 @@ def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  
                      
                      #dbslice = db[(headings > Dshells[j]) & (headings < Dshells[j+1])]
                      
-                     if (len(dbarc) > len(db)*0.01) and (Ashells[k] >= lshell):
+                     if (len(dbarc) > len(db)*0.001) and (Ashells_lp[k] >= lshell):
                             P = (len(dbarc[dbarc['edr_peak_value'] > edr])/len(dbarc))*100.
                      else:
                             P = np.nan
@@ -1976,10 +2047,277 @@ def investigate_airport(airport_code, start, end, *, Ashells=[0,  1000,  2000,  
                      bottom += current_wedge[w]
        '''
               
+       
+       '''
+       #COMPANION SCATTER PLOT
+       airport_code = 'LSZH'
+       start, end = '2019-08-01 00:00:00+00', '2019-08-14 23:59:59+00'
+       ap = pd.read_csv('~/Documents/CSV/airport-locations.csv')
+       c = [ap[ap['airport_code'] == airport_code]['lon'].iloc[0], ap[ap['airport_code'] == airport_code]['lat'].iloc[0]]
+       latlongrid = [np.round(c[0] -2.,decimals=1), np.round(c[1] -2.,decimals=1), np.round(c[0]+2.,decimals=1), np.round(c[1]+2.,decimals=1)]
+       dbi = get_db(start, end, latlongrid=latlongrid, Alayer=[0,40000])
+       dbi = dbi[(dbi['flight_departure_aerodrome'] == airport_code) | (dbi['flight_destination_aerodrome'] == airport_code)]
+       db = interpolate_db(dbi)
+       R=1.0
+       db = db[ (((db['longitude'] - c[0])**2 + (db['latitude'] - c[1])**2) <  R)]
+       
+       df = plot_latlon_scatter(db, latlongrid=latlongrid, ckey='altitude')
+       '''
 
        
        return DAarray, C
    
+       
+       
+def plot_violin(db, *, nperiods=1, edr=0.1, Alayers=[30000,31000,32000,33000, 34000, 35000, 36000, \
+                                                     37000, 38000, 39000, 40000], report=False):
+       '''
+       Simply plots a violin plot of flight altitude vs turbulence occurence for a given dataframe
+       
+       Inputs:
+              db - dataframe in question
+              nperiods - keyword for the number of time periods to split the dataframe into
+              edr - threshold for a turbulence
+              Alsyers - altitude layers to calculate turbulent % in 
+       '''
+       
+       import numpy as np
+       import matplotlib.pyplot as plt
+       
+       Alayers = np.asarray(Alayers)   #ensuring its an array
+       
+       it = db['utc_timestamp'].iloc[0]
+       ft = db['utc_timestamp'].iloc[-1]
+       
+       #initialise arrays
+       times = np.linspace(it, ft, nperiods+1)
+
+       counts = np.zeros((len(times)-1, len(Alayers)-1))
+       
+       alts=[]
+       turbs=[]
+       
+       print(times)
+       for t in range(len(times)-1):
+              print(times[t], times[t+1])
+              #select all points in timeslice and total altitude range (Alayers conditions 
+              #added incase input db isnt already adjusted to this range)
+              dbalts = db[(db['utc_timestamp'] > times[t]) & (db['utc_timestamp'] < times[t+1]) &\
+                          (db['altitude'] > Alayers[0]) & (db['altitude'] < Alayers[-1])]
+              #append all these altitudes to alts array
+              alts.append(np.array(dbalts['altitude']))
+       
+              temp = [] #initialise temporary array
+              
+              for a in range(len(Alayers)-1):
+                     #time and altitude slice of data
+                     dbt = db[(db['utc_timestamp'] > times[t]) & (db['utc_timestamp'] < times[t+1]) &\
+                              (db['altitude'] > Alayers[a]) & (db['altitude'] < Alayers[a+1])]
+                     
+                     if len(dbt)>10:
+                            #calculate percentage of reports above threshold in this segment
+                            P = (len(dbt[dbt['edr_peak_value'] > edr])/len(dbt))*100.
+                            #if report flag True calcaulte % using that variable instead
+                            if (report == True):
+                                   P = (len(dbt[dbt['report_flag'] == 1.])/len(dbt))*100.
+                     else:
+                            P=0.0
+                            
+                     counts[t,a] = len(dbt)
+                     
+                     #create an array of altitudes with length percentage chance for distribution plot
+                     temp.extend(list(np.ones(int(P*100.)) * Alayers[a]))
+              
+              #fill the turbs list
+              turbs.append(temp)
+       
+       #convert lists to arrays      
+       alts = np.asarray(alts)
+       turbs = np.asarray(turbs)
+
+       if (nperiods==1): #handling awkwardness if you only have one time period
+              alts = alts[0]
+              turbs = turbs[0]
+       
+       print(alts.shape, turbs.shape)
+       
+       
+       fig, axs = plt.subplots(1,1, figsize=(20,10))
+       abp = plt.boxplot(alts, showmeans=True, manage_ticks=False, whis='range')
+       tbp = plt.violinplot(turbs)
+       #violin plot is weird in that its axis starts at 1 for some reason, so i add a dummy label at the start
+       #labels = np.insert(np.array([time_transform(i, Back=True)[5:16] for i in times]), 0, ' ')
+       #axs.set_xticklabels(labels)
+       #axs.set_xlabel('Time period beginning at:')
+       axs.set_ylabel('Altitude')
+       axs.set_title(' ')
+       
+       return alts, turbs  
+
+def basemap_instance(latlongrid,*,ax=None, resolution='l', epsg=3857, alpha=0.4, color='green', relief=False):
+       '''
+       Function to produce a basemap instance on a given latlongrid - so i dont have to write out the same code over and over again.... (bit late)
+       Plus customisation options like citys etc.
+       '''
+       
+       from mpl_toolkits.basemap import Basemap
+       import matplotlib.pyplot as plt
+       import pandas as pd
+       import numpy as np
+       # no axis given - gets current axis
+       if (ax==None):
+              ax = plt.gca()
+              
+       bm = Basemap(resolution=resolution, epsg=epsg, ax=ax, \
+                        llcrnrlon=latlongrid[0] ,\
+                        llcrnrlat=latlongrid[1] ,\
+                        urcrnrlon=latlongrid[2] ,\
+                        urcrnrlat=latlongrid[3] )
+       bm.drawcoastlines()
+       bm.fillcontinents(alpha=alpha, color=color) 
+       bm.drawcountries()
+       bm.drawstates()
+       if (relief==True):bm.shadedrelief()       
+
+
+                     
+       return bm
+       
+       
+def bm_plot_ap(bm, latlongrid):
+       '''
+       Plot airport locations on a Basemap instance bm - doesnt work and idk why
+       '''
+       #maybe add some funcitonality to plot key airports as well?
+       ap = pd.read_csv('~/Documents/CSV/airport-locations-trimmed.csv')   
+       #select all airports within latlongrid
+       ap = ap[(ap['lon'] > latlongrid[0]) & (ap['lon'] < latlongrid[2]) &\
+               (ap['lat'] > latlongrid[1]) & (ap['lat'] < latlongrid[3])]
+       
+       bm.scatter(np.array(ap['lat']), np.array(ap['lon']), latlon=True, zorder=10)
+       
+       return bm
+
+
+
+def flight_len(flight, array=False):
+       '''
+       Very simple code to calculate total length of flight in spherical degrees
+       Input is the flight database
+       '''
+       import numpy as np
+       
+       lons = np.array(flight['longitude'])
+       lats = np.array(flight['latitude'])
+       fla = [0.]
+       
+       fl =0.
+       for p in range(len(lons)-1):
+              d = np.sqrt((lons[p+1] - lons[p])**2. + (lats[p+1] - lats[p])**2.)
+              fl += d
+              fla.append(fl)
+       
+       if (array==True): return fla
+       return fl
+
+
+def flight_birdseye(flight,*, R=2., resolution=.25):
+       '''
+       Birdseye view of flight and surrounding corridor
+       
+       '''
+       import pandas as pd
+       import numpy as np
+       import matplotlib.pyplot as plt
+       import scipy.ndimage.filters
+       from matplotlib.colors import ListedColormap
+       #find departure and destination airports
+       ap = pd.read_csv('~/Documents/CSV/airport-locations-trimmed.csv')
+       ap1lat = (ap[ap['airport_code']==flight['flight_departure_aerodrome'].iloc[0]])['lat']
+       ap1lon = (ap[ap['airport_code']==flight['flight_departure_aerodrome'].iloc[0]])['lon']  
+       ap2lat = (ap[ap['airport_code']==flight['flight_destination_aerodrome'].iloc[0]])['lat']
+       ap2lon = (ap[ap['airport_code']==flight['flight_destination_aerodrome'].iloc[0]])['lon']
+       
+       #remove turbulent reports quick for interpolation
+       flight = flight[flight['report_flag'] != 1.]
+       #create lon/lat/(alts?) arrays with airports at each end
+       lons = np.array(flight['longitude'])
+       lons = np.insert(lons, 0, ap1lon.iloc[0])
+       lons = np.append(lons, ap2lon.iloc[0])
+       lats = np.array(flight['latitude'])
+       lats = np.insert(lats, 0, ap1lat.iloc[0])
+       lats = np.append(lats, ap2lat.iloc[0])
+       #alts = np.array(flight['altitude'])
+       #alts = np.insert(alts,0,0)
+       #alts = np.append(alts, 0)       
+       
+       fl = flight_len(flight)
+       npoints = fl/(R/2.)
+       
+       #interpolating
+
+       lons_i = np.interp(np.linspace(range(len(lons))[0], range(len(lons))[-1], int(npoints)), \
+                          range(len(lons)), lons, period=360.)
+       lats_i = np.interp(np.linspace(range(len(lats))[0], range(len(lats))[-1], int(npoints)), \
+                          range(len(lats)), lats, period=180.)
+       #alts_i = np.interp(np.linspace(range(len(alts))[0], range(len(alts))[-1], int(npoints)), \
+       #                    range(len(alts)), alts)
+       
+       
+       dbs = pd.DataFrame(columns=flight.columns)
+       latlongrid=[np.min(lons)-2., np.min(lats)-2., np.max(lons)+2., np.max(lats)+2.]
+       
+       #all flights in the air at the same time as input flight
+       dt = flight['utc_timestamp'].iloc[-1] - flight['utc_timestamp'].iloc[0]
+       db = get_db(time_transform(flight['utc_timestamp'].iloc[0] - dt*0.25, Back=True), time_transform(flight['utc_timestamp'].iloc[-1] + dt*0.25, Back=True), latlongrid=latlongrid)
+       
+       
+       #building corridor dataframe
+       for points in range(len(lons_i)):
+              #all points in circle
+              dbp = db[(((db['longitude'] - lons_i[points])**2. + (db['latitude'] - lats_i[points])**2.) < R)]
+              #concat into array
+              dbs = pd.concat([dbs,dbp])
+              
+       #remove duplicates from overlapping circles
+       dbs = dbs.drop_duplicates()
+       #interpolate entire database for stats
+       dbi = interpolate_db(dbs)
+       #create 2d data from dataframe
+       
+       x, y, db2d = create2d_data(dbi, 'edr_peak_value', latlongrid, resolution=resolution, minpoints=2)
+       xx, yy = np.meshgrid(x, y)
+       
+       #plotting
+       fig, axs = plt.subplots(1,1, figsize=(20,20))
+       bm = basemap_instance(latlongrid, ax=axs)
+       #corridor
+       flp = bm.plot(lons, lats, ax=axs, latlon=True, zorder=4, marker='D')
+       fsp =bm.scatter(np.array(flight['longitude']),np.array(flight['latitude']), ax=axs, latlon=True, zorder=5, c=list(flight['edr_peak_value']), marker='D')
+       sp = bm.scatter(np.array(dbs['longitude']), np.array(dbs['latitude']), ax=axs, latlon=True, zorder=3, alpha=0.5, c=list(dbs['edr_peak_value']))
+       z = scipy.ndimage.filters.gaussian_filter(db2d, 1.)
+       levels = np.linspace(np.min(z), np.max(z), 10)
+       alphas = np.array([i**1.2 for i in levels/np.max(levels)])
+       my_cmap = ListedColormap(np.array([plt.cm.Reds(levels[i], alpha=alphas[i]) for i in range(len(levels))]))
+       
+       cp = bm.contour(yy,xx,z,ax=axs, zorder=2, levels=levels, linewidths=1.0, latlon=True, cmap=my_cmap)
+       cpf = bm.contourf(yy,xx,z,ax=axs, zorder=1, levels=levels, latlon=True, cmap='Reds')
+       cb = bm.colorbar(cpf, location='right', ax=axs, drawedges=True)
+     
+       #all
+       dball = db[db['altitude']>15000]
+       spall = bm.scatter(np.array(dball['longitude']), np.array(dball['latitude']), ax=axs, latlon=True, zorder=2, alpha=0.2, color='grey')
+       
+       
+       
+       
+       cb.set_label('Peak EDR Value')       
+              
+       
+       return dbi
+       
+       
+       
        
        
        

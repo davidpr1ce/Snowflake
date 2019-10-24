@@ -12,42 +12,99 @@ from mpl_toolkits.basemap import Basemap
 import matplotlib.pyplot as plt
 
 #airports in question
-aplatlon = airport_grid('KDEN', 'KATL', factor=.5)
-db = get_db('2019-08-01 00:00:00+00', '2019-08-31 23:59:59+00', latlongrid=aplatlon)
-db = interpolate_db(db)
+#aplatlon = airport_grid('KDEN', 'KATL', factor=.5)
+ap = pd.read_csv('~/Documents/CSV/airport-locations-trimmed.csv')
+aps = ['KDEN', 'KATL']
+latlongrid = airport_grid(aps[0], aps[1], factor=.5)
+db = get_db('2019-08-01 00:00:00+00', '2019-08-02 23:59:59+00', latlongrid=latlongrid)
+dbf = find_flights(db, aps[0], aps[1], Both=False)
+tafis = dbf[dbf['edr_peak_value']>0.2]['metadata_tafi'].dropna().unique()
+flights = dbf[(dbf['metadata_tafi'] == tafis[0])]
+flight = flight_info(flights[flights['metadata_tafi'] == tafis[0]], Plot=False)
+
+
+flighti = interpolate_flight(flight, interval=60.)
+fla = flight_len(flighti, array=True) # array of distance from start
+#re-interpolate onto 1deg distance grid
+dstep = .5
+npoints = int(fla[-1]/dstep)
+xd = np.linspace(fla[0], fla[-1], int(fla[-1])) # 1deg distance array (ish)
+loni = np.interp( xd, fla, flighti['longitude'])
+lati = np.interp( xd, fla, flighti['latitude'])
+alti = np.interp( xd, fla, flighti['altitude'])
+utci = np.interp( xd, fla, flighti['utc_timestamp'])
+   
+fig, ax = plt.subplots(1,1,figsize=(10,10))
+plt.plot(loni, lati, marker='o')
+plt.plot(loni + 1, lati +1, marker='o')
+plt.plot(loni - 1, lati -1, marker='o')
+
+from shapely.geometry import Point
+from shapely.geometry.polygon import Polygon
+
+#draws and appends polygons leading each point in lat/lons with a corridor of width - gl figuring that out tbh but it works.
+width=1.
+polygons = [[((loni-width)[i], (lati-width)[i]), ((loni-width)[i+1], (lati-width)[i+1]), ((loni+width)[i+1], (lati+width)[i+1]),\
+              ((loni+width)[i], (lati+width)[i])] for i in range(len(loni)-1)]
+
+for p in range(len(polygons)):
+       xp, yp = Polygon(polygons[p]).exterior.xy
+       plt.plot(xp,yp, color=plt.cm.viridis(p/len(polygons)), marker='D')
 
 
 
-t1 = time_transform('2019-08-01 00:00:00+00')
-#two ways of doing this...
-days = [(t1 + i) for i in np.linspace(0, 2592000, 31)] 
-weeks = [time_transform('2019-08-' + str(i).zfill(2) + ' 00:00:00+00') for i in np.arange(1, 31, 7)]
-Alayers = np.linspace(30000,40000,11)
+import scipy.ndimage.filters
+from matplotlib.colors import ListedColormap
+from geopandas import GeoSeries
+#draws and appends polygons leading each point in lat/lons with a corridor of width - gl figuring that out tbh but it works.
+Alayers = np.linspace(0, 40000, 41)
 
-times = days  #choose days or weeks
+dbi = interpolate_db(db)
 
 
-#initalise
-edr = 0.06
-out = np.zeros((len(times), len(Alayers)))
-
-for t in range(len(times)-1):
-       print(t)
-       for a in range(len(Alayers)-1):
-              #select db region of interest
-              dbt = db[(db['utc_timestamp'] > times[t]) & (db['utc_timestamp'] < times[t+1]) &\
-                      (db['altitude'] > Alayers[a]) & (db['altitude'] < Alayers[a+1])]
+cross = np.zeros((len(polygons), len(Alayers)-1))
+for poly in range(len(polygons)):
+       polygon = polygons[poly]
+       for A in range(len(Alayers)-1):
+              dbc = dbi[(dbi['altitude'] > Alayers[A]) & (dbi['altitude'] < Alayers[A+1])]
               
-              if len(dbt) > len(dbt)*0.01:
-                     out[t,a] = (len(dbt[dbt['edr_peak_value'] > edr])/len(dbt))*100.
+              #points = [ Point(np.array(dbc['longitude'])[i], np.array(dbc['latitude'])[i]) for i in range(len(dbc))]
+              points = GeoSeries(map(Point, zip(np.array(dbc['longitude']), np.array(dbc['latitude']))))
+              
+              bools = [Polygon(polygon).contains(i) for i in points]
+              
+              if (len(dbc[bools]['metadata_tafi'].unique()) > 1) | (sum(bools))>5:     #contribution from more than one flight or enough points             
+                     cross[poly,A] = dbc[bools]['edr_peak_value'].mean()
               else:
-                     out[t,a] = np.nan
-                     
-              
-          
-              
-              
-              
-              
-              
-              
+                     cross[poly,A] = 0.0
+
+
+
+def lonlat2dist(lons, lats, flight):
+       '''
+       attempt to convert lon,lat into distance along path for scatter plot in 2d
+       
+       '''
+       #initial lon and lat for calculation
+       loni, lati = ap[ap['airport_code'] == flight['flight_departure_aerodrome']]['lon'].iloc[0], \
+                     ap[ap['airport_code'] == flight['flight_departure_aerodrome']]['lat'].iloc[0]
+       
+       
+       
+       
+       
+       return
+
+
+
+fig, axs = plt.subplots(1,1, figsize=(20,10))
+xx, yy = np.meshgrid((xd[:-1]+xd[1:])/2., (Alayers[:-1]+Alayers[1:])/2.)
+z = scipy.ndimage.filters.gaussian_filter(cross, 1.)
+levels=np.linspace(z.min(),z.max(), 10)
+
+axs.contour(xx, yy ,z.T, zorder=2, levels=levels, linewidths=1.0, cmap='Reds')
+axs.hlines(Alayers, xd.min(), xd.max(), linestyle='--', zorder=3,alpha=0.3)
+axs.vlines(xd, 0, 40000, linestyle='--', zorder=3, alpha=0.3)
+cf = axs.contourf(xx, yy, z.T, zorder=1, levels=levels, cmap='Reds')
+cb = plt.colorbar(cf, ax=axs)
+    
